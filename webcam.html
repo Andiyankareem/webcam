@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-Time Finger Counter</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="bg-indigo-600 p-2.5 rounded-xl shadow-lg shadow-indigo-500/20">
+          <i class="fa-solid fa-hand fa-lg text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight">Hand Tracker Vision by Andy</h1>
+          <p class="text-xs text-slate-400">Real-time Computer Vision Finger Counter</p>
+        </div>
+      </div>
+      
+      <div id="statusBadge" class="flex items-center space-x-2 bg-slate-800/80 border border-slate-700/60 px-3 py-1.5 rounded-full text-xs font-medium">
+        <span id="statusDot" class="w-2.5 h-2.5 rounded-full bg-yellow-400 animate-pulse"></span>
+        <span id="statusText" class="text-slate-300">Initializing Model...</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col lg:flex-row gap-8">
+    
+    <div class="flex-1 flex flex-col items-center">
+      <div class="relative w-full max-w-2xl bg-slate-800/50 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl aspect-video flex items-center justify-center">
+        
+        <div id="placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-slate-500 bg-slate-950/40 z-0">
+          <i class="fa-solid fa-video-slash text-5xl mb-3"></i>
+          <p class="text-sm font-medium">Camera is offline</p>
+        </div>
+
+        <video id="webcam" class="hidden" playsinline></video>
+
+        <canvas id="outputCanvas" class="w-full h-full object-cover transform -scale-x-100 z-10"></canvas>
+
+        <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center space-x-3 bg-slate-900/90 backdrop-blur border border-slate-700/50 p-2 rounded-xl shadow-xl">
+          <button id="toggleCamBtn" disabled class="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition-all duration-200 flex items-center space-x-2 shadow-md shadow-indigo-600/30 disabled:opacity-50 disabled:cursor-not-allowed">
+            <i class="fa-solid fa-play"></i>
+            <span>Start Camera</span>
+          </button>
+        </div>
+
+      </div>
+
+      <div class="w-full max-w-2xl mt-4 flex justify-between items-center text-xs text-slate-400 px-1">
+        <span class="flex items-center gap-1.5"><i class="fa-solid fa-shield-halved text-emerald-400"></i> Video processed locally on your browser</span>
+        <span id="fpsCounter">FPS: 0</span>
+      </div>
+    </div>
+
+    <div class="w-full lg:w-96 flex flex-col gap-6">
+      
+      <div class="bg-gradient-to-b from-slate-800 to-slate-800/60 rounded-2xl border border-slate-700/60 p-6 shadow-xl relative overflow-hidden flex flex-col items-center text-center">
+        <div class="absolute -right-6 -top-6 w-24 h-24 bg-indigo-500/10 rounded-full blur-xl pointer-events-none"></div>
+        <span class="text-xs font-semibold tracking-wider text-indigo-400 uppercase mb-1">Total Raised Count</span>
+        
+        <div id="countDisplay" class="text-7xl font-extrabold text-white my-3 tracking-tight font-mono">
+          0
+        </div>
+        
+        <p class="text-xs text-slate-400">Total extended fingers across all detected hands</p>
+      </div>
+
+      <div class="bg-slate-800/40 rounded-2xl border border-slate-800 p-6 flex-1 shadow-xl flex flex-col">
+        <h2 class="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">
+          <i class="fa-solid fa-chart-simple text-indigo-400"></i> Detected Hands Details
+        </h2>
+
+        <div id="handsBreakdown" class="flex-1 flex flex-col justify-center items-center gap-4">
+          <div class="text-center py-8 text-slate-500">
+            <i class="fa-solid fa-hand-sparkles text-3xl mb-2 block opacity-40"></i>
+            <p class="text-xs">No hands currently detected in view</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('outputCanvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const toggleCamBtn = document.getElementById('toggleCamBtn');
+    const placeholder = document.getElementById('placeholder');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const countDisplay = document.getElementById('countDisplay');
+    const handsBreakdown = document.getElementById('handsBreakdown');
+    const fpsCounter = document.getElementById('fpsCounter');
+
+    let camera = null;
+    let isCameraRunning = false;
+    let lastFrameTime = performance.now();
+    let frameCount = 0;
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6
+    });
+
+    hands.onResults(onResults);
+
+    setStatus('ready', 'Model Ready');
+    toggleCamBtn.disabled = false;
+
+    const FINGERS = {
+      THUMB: { tip: 4, ip: 3, mcp: 2, cmc: 1 },
+      INDEX: { tip: 8, pip: 6, mcp: 5 },
+      MIDDLE: { tip: 12, pip: 10, mcp: 9 },
+      RING: { tip: 16, pip: 14, mcp: 13 },
+      PINKY: { tip: 20, pip: 18, mcp: 17 }
+    };
+
+    function countExtendedFingers(landmarks, handednessLabel) {
+      const states = { thumb: false, index: false, middle: false, ring: false, pinky: false };
+      
+      states.index = landmarks[FINGERS.INDEX.tip].y < landmarks[FINGERS.INDEX.pip].y;
+      states.middle = landmarks[FINGERS.MIDDLE.tip].y < landmarks[FINGERS.MIDDLE.pip].y;
+      states.ring = landmarks[FINGERS.RING.tip].y < landmarks[FINGERS.RING.pip].y;
+      states.pinky = landmarks[FINGERS.PINKY.tip].y < landmarks[FINGERS.PINKY.pip].y;
+
+      const thumbTip = landmarks[FINGERS.THUMB.tip];
+      const thumbIp = landmarks[FINGERS.THUMB.ip];
+      const thumbMcp = landmarks[FINGERS.THUMB.mcp];
+      const indexMcp = landmarks[FINGERS.INDEX.mcp];
+
+      const isRightHand = handednessLabel === 'Right';
+      
+      if (isRightHand) {
+        states.thumb = thumbTip.x < thumbIp.x && thumbTip.x < indexMcp.x;
+      } else {
+        states.thumb = thumbTip.x > thumbIp.x && thumbTip.x > indexMcp.x;
+      }
+
+      const totalCount = Object.values(states).filter(Boolean).length;
+
+      return { totalCount, states };
+    }
+
+    function onResults(results) {
+      const now = performance.now();
+      frameCount++;
+      if (now - lastFrameTime >= 1000) {
+        fpsCounter.innerText = `FPS: ${frameCount}`;
+        frameCount = 0;
+        lastFrameTime = now;
+      }
+
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      let totalFingersCount = 0;
+      let handsInfo = [];
+
+      if (results.multiHandLandmarks && results.multiHandedness) {
+        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+          const landmarks = results.multiHandLandmarks[i];
+          const handedness = results.multiHandedness[i].label;
+
+          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#6366f1', lineWidth: 4 });
+          drawLandmarks(canvasCtx, landmarks, { color: '#e0e7ff', fillColor: '#4f46e5', radius: 4 });
+
+          const analysis = countExtendedFingers(landmarks, handedness);
+          totalFingersCount += analysis.totalCount;
+          
+          handsInfo.push({
+            label: handedness,
+            count: analysis.totalCount,
+            states: analysis.states
+          });
+        }
+      }
+
+      canvasCtx.restore();
+
+      updateUI(totalFingersCount, handsInfo);
+    }
+
+    function updateUI(totalCount, handsInfo) {
+      countDisplay.innerText = totalCount;
+
+      if (handsInfo.length === 0) {
+        handsBreakdown.innerHTML = `
+          <div class="text-center py-8 text-slate-500">
+            <i class="fa-solid fa-hand-sparkles text-3xl mb-2 block opacity-40"></i>
+            <p class="text-xs">No hands currently detected in view</p>
+          </div>`;
+        return;
+      }
+
+      handsBreakdown.innerHTML = handsInfo.map((hand, idx) => `
+        <div class="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl p-4 flex flex-col gap-3">
+          <div class="flex justify-between items-center">
+            <span class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+              <i class="fa-solid fa-hand"></i> ${hand.label} Hand
+            </span>
+            <span class="bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-bold px-2.5 py-0.5 rounded-full">
+              ${hand.count} Extended
+            </span>
+          </div>
+          
+          <div class="grid grid-cols-5 gap-1 pt-1 border-t border-slate-700/40 text-center">
+            ${renderFingerBadge('T', hand.states.thumb)}
+            ${renderFingerBadge('I', hand.states.index)}
+            ${renderFingerBadge('M', hand.states.middle)}
+            ${renderFingerBadge('R', hand.states.ring)}
+            ${renderFingerBadge('P', hand.states.pinky)}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderFingerBadge(label, isRaised) {
+      const activeClass = "bg-emerald-500/20 text-emerald-400 border-emerald-500/40";
+      const inactiveClass = "bg-slate-900/60 text-slate-500 border-slate-800";
+      return `
+        <div class="flex flex-col items-center">
+          <span class="text-[10px] text-slate-400 mb-1 font-mono">${label}</span>
+          <div class="w-full py-1 text-xs font-semibold rounded border ${isRaised ? activeClass : inactiveClass}">
+            ${isRaised ? '▲' : '▼'}
+          </div>
+        </div>`;
+    }
+
+    function setStatus(state, message) {
+      statusText.innerText = message;
+      statusDot.className = 'w-2.5 h-2.5 rounded-full ';
+      if (state === 'active') {
+        statusDot.className += 'bg-emerald-400 animate-pulse';
+      } else if (state === 'ready') {
+        statusDot.className += 'bg-blue-400';
+      } else {
+        statusDot.className += 'bg-yellow-400 animate-pulse';
+      }
+    }
+
+    async function toggleCamera() {
+      if (!isCameraRunning) {
+        try {
+          setStatus('loading', 'Starting Camera...');
+          toggleCamBtn.disabled = true;
+
+          camera = new Camera(videoElement, {
+            onFrame: async () => {
+              await hands.send({ image: videoElement });
+            },
+            width: 1280,
+            height: 720
+          });
+
+          await camera.start();
+
+          isCameraRunning = true;
+          placeholder.classList.add('hidden');
+          toggleCamBtn.disabled = false;
+          toggleCamBtn.innerHTML = `<i class="fa-solid fa-stop"></i><span>Stop Camera</span>`;
+          toggleCamBtn.classList.replace('bg-indigo-600', 'bg-rose-600');
+          toggleCamBtn.classList.replace('hover:bg-indigo-500', 'hover:bg-rose-500');
+          setStatus('active', 'Tracking Active');
+
+        } catch (err) {
+          console.error("Camera access error:", err);
+          setStatus('ready', 'Camera Access Denied');
+          toggleCamBtn.disabled = false;
+          alert("Unable to access webcam. Please check browser permissions.");
+        }
+      } else {
+        if (camera) {
+          await camera.stop();
+        }
+        isCameraRunning = false;
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        placeholder.classList.remove('hidden');
+        toggleCamBtn.innerHTML = `<i class="fa-solid fa-play"></i><span>Start Camera</span>`;
+        toggleCamBtn.classList.replace('bg-rose-600', 'bg-indigo-600');
+        toggleCamBtn.classList.replace('hover:bg-rose-500', 'hover:bg-indigo-500');
+        setStatus('ready', 'Model Ready');
+        updateUI(0, []);
+      }
+    }
+
+    toggleCamBtn.addEventListener('click', toggleCamera);
+  </script>
+</body>
+</html>
